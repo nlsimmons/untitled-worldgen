@@ -1,0 +1,58 @@
+pastoralism (constant or seasonal, also see transhumance)
+nomadism
+farming
+fishing
+(each on a sliding scale)
+
+relations
+run by a chief
+may swear fealty to another entity
+may have partnership to another village
+may have feud
+confederation as agreed upon by a group
+
+environment
+river, forest, hills, mountains, coastal
+wildness (presence of wild animals)
+fertility (ability to grow food)
+seasonality of ability to grow food, and fragility to natural events
+
+events
+animal attack
+	hide or fight
+territorial dispute (not an attack but may escalate)
+attack by neighboring village or neighboring herders (for a variety of reasons)
+	hide or fight, seek revenge
+internal squabble
+	may arbitrate dispute, may go well or poorly based on stats
+
+choices
+pursue a relationship
+construct an inspiring tale
+go on a raid
+
+focuses for each lifetime / destiny
+    mercantile
+        trade
+    personal relationships
+        gossip
+    martial
+
+personal events
+dispute with someone
+prophecy
+
+individuals
+intelligence
+aggression
+charisma
+strength
+luck
+reputation - the perception of others about your abilities, can be faked, but will need to be backed up by subterfuge or luck
+
+culture
+mono/polygyny
+mono/polyandry
+marriage or not
+inheiritance
+traditional crafts (specialty goods)
