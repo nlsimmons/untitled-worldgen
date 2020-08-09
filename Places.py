@@ -67,6 +67,7 @@ class Node:
         self.coords = point
         self.world = world
         self.regions = set()
+        self.borders = set()
         self.river_count = 0
 
     @property
@@ -90,30 +91,26 @@ class Node:
             self._precipitation = precipitation
             return precipitation
 
-    def neighbors(self):
+    def neighbors(self, type=None):
         _neighbors = []
-
-        for r in self.regions:
-            for border in r.borders:
-                if self in border.nodes:
-                    _neighbors.append([n for n in border.nodes if n is not self][0])
+        for b in self.borders:
+            if type and type not in b.type:
+                continue
+            for n in b.nodes:
+                if n is not self:
+                    _neighbors.append(n)
+        if type and not _neighbors:
+            return self.neighbors()
         return _neighbors
-
-        # _neighbors = set()
-        # for r in self.regions:
-        #     for n in r.nodes:
-        #         if n is self:
-        #             continue
-        #         _neighbors.add(n)
-        # return _neighbors
 
 
 class Border:
-    type = ''
-
     def __init__(self, node1, node2, world):
         self.nodes = (node1, node2)
+        node1.borders.add(self)
+        node2.borders.add(self)
         self.world = world
+        self.type = ''
 
     @property
     def between(self):
@@ -158,6 +155,7 @@ class Region:
         self.nodes = []
         self.centroid = get_midpoint(points)
         self.subregions = set()
+        self.locales = set()
         self.type = ''
         self.population = 0
         self.capital = None
@@ -217,16 +215,31 @@ class Region:
             self._borders = _borders
             return _borders
 
-    def maybe_encloses(self, point):
-        min_x = min(x for x, y in self.points)
-        max_x = max(x for x, y in self.points)
-        min_y = min(y for x, y in self.points)
-        max_y = max(y for x, y in self.points)
-        x, y = point
+    @property
+    def bounds(self):
+        try:
+            return self._bounds
+        except AttributeError:
+            min_x = min(x for x, y in self.points)
+            max_x = max(x for x, y in self.points)
+            min_y = min(y for x, y in self.points)
+            max_y = max(y for x, y in self.points)
+            self._bounds = {
+                'min_x': min_x,
+                'max_x': max_x,
+                'min_y': min_y,
+                'max_y': max_y,
+            }
+            return self._bounds
 
-        if (min_x <= x <= max_x) and (min_y <= y <= max_y):
-            return True
-        return False
+    def maybe_encloses(self, point):
+        x, y = point
+        if(self.bounds['min_x'] > x
+           or self.bounds['max_x'] < x
+           or self.bounds['min_y'] > y
+           or self.bounds['max_y'] < y):
+            return False
+        return True
 
     def encloses(self, point):
         point_x, point_y = point
@@ -355,15 +368,17 @@ class Region:
 
 
 class Subregion(Region):
-    pass
-    # def __init__(self, *args, **kwargs):
-    #     self.display_regions = set()
-    #     super().__init__(*args, **kwargs)
-    # def bordered(self, subregions, exclude_ocean=True):
-    #     bordered_regions = self.region.bordered(self.world.regions)
-    #     subregions = [r for r in subregions if r.region in bordered_regions]
+    def __init__(self, *args, **kwargs):
+        self.locales = set()
+        super().__init__(*args, **kwargs)
 
-    #     return super().bordered(subregions, exclude_ocean=exclude_ocean)
+
+class Locale(Region):
+    pass
+
+
+class Continent(Region):
+    pass
 
 
 class World:
@@ -386,13 +401,18 @@ class World:
 
         self.regions = set()
         self.subregions = set()
+        self.locales = set()
 
         _regions = kwargs.get('regions', [])
         _subregions = kwargs.get('subregions', [])
-        _display_regions = kwargs.get('display_regions', [])
+        _locales = kwargs.get('locales', [])
+
+        for region in _regions:
+            region.world = self
+            self.regions.add(region)
 
         for subregion in _subregions:
-            might_enclose = [r for r in _regions if r.maybe_encloses(subregion.centroid)]
+            might_enclose = [r for r in self.regions if r.maybe_encloses(subregion.centroid)]
             if not might_enclose:
                 continue
             if len(might_enclose) == 1:
@@ -403,74 +423,111 @@ class World:
                         region = r
                         break
             subregion.region = region
-            subregion.world = self
             subregion.type = region.type
+
             region.subregions.add(subregion)
+            subregion.world = self
+
             self.subregions.add(subregion)
 
-        for region in _regions:
-            if region.subregions:
-                region.world = self
-                self.regions.add(region)
-
-        self.display_regions = set()
-        for display_region in _display_regions:
-            might_enclose = [r for r in self.subregions if r.maybe_encloses(display_region.centroid)]
+        for locale in _locales:
+            might_enclose = [r for r in self.subregions if r.maybe_encloses(locale.centroid)]
             if not might_enclose:
                 continue
             if len(might_enclose) == 1:
                 subregion = might_enclose[0]
             else:
                 for r in might_enclose:
-                    if r.encloses(display_region.centroid):
+                    if r.encloses(locale.centroid):
                         subregion = r
                         break
-            display_region.region = subregion
-            display_region.type = subregion.type
-            display_region.world = self
-            subregion.subregions.add(display_region)
-            self.display_regions.add(display_region)
+            locale.subregion = subregion
+            locale.type = subregion.type
 
-        for ssr in self.display_regions:
-            if ssr.type == 'ocean':
-                b = ssr.bordered(self.display_regions)
-                for sr in b:
-                    if sr.type != 'ocean':
-                        sr.type = 'coast'
+            subregion.locales.add(subregion)
+            locale.region = subregion.region
+            locale.region.locales.add(locale)
+            locale.world = self
+
+            self.locales.add(locale)
+
+        # print("Classifying...")
+        # for locale in self.locales:
+        #     if locale.type == 'ocean':
+        #         b = locale.bordered(self.locales)
+        #         for r in b:
+        #             if r.type != 'ocean':
+        #                 r.type = 'coast'
 
         # Index nodes
-        for ssr in self.regions:
-            ssr.index(self)
-        for ssr in self.subregions:
-            ssr.index(self)
-        for ssr in self.display_regions:
-            ssr.index(self)
+        print("Indexing...")
+        for region in self.regions:
+            region.index(self)
+        for subregion in self.subregions:
+            subregion.index(self)
+        for locale in self.locales:
+            locale.index(self)
 
-        self.land = set(r for r in self.display_regions if r.type != 'ocean')
-        self.sea = set(r for r in self.display_regions if r.type == 'ocean')
+        self.land = set(r for r in self.locales if r.type != 'ocean')
+        self.sea = set(r for r in self.locales if r.type == 'ocean')
 
         # Index borders
-        self.borders = set()
-        for sr in self.subregions:
-            for ssr in sr.subregions:
-                for b in ssr.borders:
-                    try:
-                        b.type = set()
-                        if all(r.type == 'ocean' for r in b.between):
-                            b.type.add('ocean')
-                        elif any(r.type == 'ocean' for r in b.between):
-                            b.type.add('coast')
+        self.borders = {
+            't1': set(),
+            't2': set(),
+            't3': set()
+        }
 
-                        if b.between[0].region.region is not b.between[1].region.region:
-                            b.type.add('t1')
-                        elif b.between[0].region is not b.between[1].region:
-                            b.type.add('t2')
-                        else:
-                            b.type.add('t3')
-                    except IndexError:
-                        pass
+        for region in self.regions:
+            for b in region.borders:
+                try:
+                    l1, l2 = b.between
+                except (IndexError, ValueError):
+                    continue
+                b.type = set()
+                if l1.type == 'ocean' and l2.type == 'ocean':
+                    b.type.add('ocean')
+                elif l1.type == 'ocean' or l2.type == 'ocean':
+                    b.type.add('coast')
+                b.type.add('t1')
+                self.borders['t1'].add(b)
 
-                    self.borders.add(b)
+        for subregion in self.subregions:
+            for b in subregion.borders:
+                try:
+                    l1, l2 = b.between
+                except (IndexError, ValueError):
+                    continue
+                b.type = set()
+                if l1.type == 'ocean' and l2.type == 'ocean':
+                    b.type.add('ocean')
+                elif l1.type == 'ocean' or l2.type == 'ocean':
+                    b.type.add('coast')
+
+                if l1.region is not l2.region:
+                    b.type.add('t1')
+                else:
+                    b.type.add('t2')
+                self.borders['t2'].add(b)
+
+        for locale in self.locales:
+            for b in locale.borders:
+                try:
+                    l1, l2 = b.between
+                except (IndexError, ValueError):
+                    continue
+                b.type = set()
+                if l1.type == 'ocean' and l2.type == 'ocean':
+                    b.type.add('ocean')
+                elif l1.type == 'ocean' or l2.type == 'ocean':
+                    b.type.add('coast')
+                if l1.region is not l2.region:
+                    b.type.add('t1')
+                elif l1.subregion is not l2.subregion:
+                    b.type.add('t2')
+                else:
+                    b.type.add('t3')
+                self.borders['t3'].add(b)
 
     def update(self):
         self.region_types = dict()

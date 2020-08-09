@@ -7,7 +7,7 @@ from pprint import pprint
 from sympy.geometry import Point  # , Polygon
 from scipy.spatial import Voronoi
 from Language import Language, Culture
-from Places import World, Region, Subregion, Settlement, Road
+from Places import World, Region, Subregion, Locale, Settlement, Road
 from perlin import NoiseMap
 import copy
 import time
@@ -122,7 +122,6 @@ class Worldgen:
         cls.height = kwargs.get('height')
         percent_ocean = kwargs.get('percent_ocean') / 100
         n_regions = int(kwargs.get('n_regions'))
-        avg_geo_area = kwargs.get('avg_geo_area', 1000)  # Average geographical area of each subregion in sqkm
 
         regions = cls.voronoi_map(n_regions, **kwargs)
         regions = cls.clip_regions(regions)
@@ -149,17 +148,17 @@ class Worldgen:
                         break
                 current = random.choice(regions)
 
-        n_subdivisions = kwargs.get('n_divisions') * n_regions
+        n_subdivisions = n_regions * kwargs.get('n_divisions')
         subregions = cls.voronoi_map(n_subdivisions, **kwargs)
         subregions = [Subregion(r) for r in cls.clip_regions(subregions)]
 
-        n_display_regions = n_subdivisions * 10
-        display_regions = cls.voronoi_map(n_display_regions, **kwargs)
-        display_regions = [Subregion(r) for r in cls.clip_regions(display_regions)]
+        n_locales = n_subdivisions * kwargs.get('n_detail')
+        locales = cls.voronoi_map(n_locales, **kwargs)
+        locales = [Locale(r) for r in cls.clip_regions(locales)]
 
         avg_area = sum(s.area for s in subregions) / len(subregions)
 
-        scale = math.sqrt(avg_area) / math.sqrt(avg_geo_area)  # u / km
+        scale = math.sqrt(avg_area) / math.sqrt(1000)  # u / km
 
         heightmap = NoiseMap(width=cls.width, height=cls.height, scale=500, seed=5)
         weathermap = NoiseMap(width=cls.width, height=cls.height, seed=10)
@@ -169,9 +168,9 @@ class Worldgen:
         print('')
         print("Carving out the landscape...")
         start = time.time()
-        world = World(regions=regions,
-                      subregions=subregions,
-                      display_regions=display_regions,
+        world = World(regions=regions,  # Large scale regions
+                      subregions=subregions,  # Areas 1000sqkm in size
+                      locales=locales,  # Areas 100sqkm in size
                       scale=scale,
                       heightmap=heightmap,
                       weathermap=weathermap,
@@ -283,7 +282,7 @@ class Worldgen:
                 traversed = set()
 
                 while True:
-                    b = current.bordered(world.land)
+                    b = current.bordered(world.subregions)
                     if not b:
                         break
                     next = sorted(b, key=lambda r: r.distance_to(d))[0]
@@ -306,8 +305,8 @@ class Worldgen:
 
                     traversed.add(next)
                     current = next
-
         world.roads = roads
+        world.capitals = capitals
         end = time.time()
         print("Finished in %d seconds" % (end - start))
 
@@ -346,13 +345,15 @@ world_surface.convert_alpha()
 world_surface.set_colorkey(WHITE)
 world_surface.fill(DARK_BLUE)
 
-n_regions = 25
+n_regions = 50
 n_divisions = 15
+n_detail = 20
 world = Worldgen.new(n_regions=n_regions,
                      n_divisions=n_divisions,
+                     n_detail=n_detail,
                      width=screen_x,
                      height=screen_y,
-                     percent_ocean=50,
+                     percent_ocean=30,
                      relax_passes=2)
 
 # player_gender = 'male'
@@ -380,33 +381,37 @@ world_offset_y = 0
 #     pygame.draw.polygon(world_surface, color, vertices)
 #     pygame.draw.polygon(world_surface, BLACK, vertices, 1)
 
-for sr in world.land:
-    if sr.type == 'coast':
+for locale in world.land:
+    if locale.type == 'coast':
         color = DARK_GREEN
     else:
         color = GREEN
 
-    if sr.subregions:
-        for dr in sr.subregions:
+    if locale.subregions:
+        for dr in locale.subregions:
             vertices = [(int(x), int(y)) for x, y in dr.points]
             pygame.draw.polygon(world_surface, color, vertices)
             # pygame.draw.polygon(world_surface, BLACK, vertices, 1)
     else:
-        vertices = [(int(x), int(y)) for x, y in sr.points]
+        vertices = [(int(x), int(y)) for x, y in locale.points]
         pygame.draw.polygon(world_surface, color, vertices)
         # pygame.draw.polygon(world_surface, BLACK, vertices, 1)
 
     # vertices = [(int(node.x), int(node.y)) for node in sr.nodes]
     # pygame.draw.polygon(world_surface, BLACK, vertices, 1)
 
-    if sr is sr.region.capital:
-        x, y = sr.centroid
-        pygame.draw.circle(world_surface, BLACK, (int(x), int(y)), 5, 1)
+# Draw capital cities
+for capital in world.capitals:
+    x, y = capital.centroid
+    pygame.draw.circle(world_surface, BLACK, (int(x), int(y)), 5, 1)
 
-for b in world.borders:
+# Draw borders
+for b in world.borders.get('t3'):
     if 'ocean' in b.type:
         continue
-    elif 'coast' in b.type or 't2' in b.type:
+    elif 'coast' in b.type:
+        continue
+    elif 't2' in b.type:
         weight = 1
     elif 't1' in b.type:
         weight = 3
@@ -459,11 +464,6 @@ for road in world.roads:
 #     pass
 
 # Draw rivers
-# for river in world.rivers:
-#     for river_segment in river:
-#         r1, r2 = river_segment
-#         pygame.draw.line(world_surface, DARK_BLUE, r1.centroid, r2.centroid, 3)
-
 for source in world.river_sources:
     x = int(source.x)
     y = int(source.y)
@@ -475,7 +475,8 @@ for source in world.river_sources:
     segments = []
     while elevation > 0:
         try:
-            next = sorted(([n for n in current.neighbors() if n not in traversed]),
+            traversed.append(current)
+            next = sorted(([n for n in current.neighbors('t2') if n not in traversed]),
                           key=lambda r: r.elevation)[0]
             segments.append((current, next))
 
@@ -484,7 +485,6 @@ for source in world.river_sources:
                 break
 
             elevation = next.elevation
-            traversed.append(next)
             current = next
         except IndexError:
             break
@@ -529,12 +529,12 @@ while running:
 
         text = []
 
-        for display_region in world.land:
+        for locale in world.land:
             try:
-                if(display_region.maybe_encloses((cursor_x, cursor_y))
-                   and display_region.encloses((cursor_x, cursor_y))):
-                    subregion = display_region.region
-                    region = subregion.region
+                if(locale.maybe_encloses((cursor_x, cursor_y))
+                   and locale.encloses((cursor_x, cursor_y))):
+                    subregion = locale.subregion
+                    region = locale.region
                     text.append(f'Region: {region.name}')
                     text.append(f'Locale: {subregion.name}')
                     # text.append(f'Region of {region.name}')
