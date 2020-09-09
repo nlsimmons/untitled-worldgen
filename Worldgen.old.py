@@ -163,8 +163,5 @@ for settlement in entities:
 # tooltip_surface = pygame.Surface(tooltip_size, pygame.SRCALPHA, 32)
 # tooltip_surface.convert_alpha()
 
-# cursor_pos_surface = pygame.Surface((75, 50), pygame.SRCALPHA, 32)
-# cursor_pos_surface.convert_alpha()
-
 # year_display_surface = pygame.Surface((75, 25), pygame.SRCALPHA, 32)
 # year_display_surface.convert_alpha()

@@ -1,0 +1,81 @@
+India
+25% Forest
+50% Arable
+10% Pasture
+15% Other
+
+877 mil rural
+
+
+
+Philippines
+20% Arable
+25% Forest
+20% Pasture
+35% Other
+
+
+China
+12% Arable
+22% Forest
+44% Pasture
+22% Other
+
+Papua New Guinea
+75% Forest
+2% Pasture
+0% Arable
+23% Other
+
+Area = 0.46 mil
+0.35 mil forest
+
+86% Rural = 7.4 mil rural population
+20 /sqkm
+
+Thailand
+33% Arable
+10% Pasture
+32% Forest
+25% Other
+
+Indonesia
+15% Arable
+50% Forest
+15% Pasture
+30% Other
+
+44% Rural = 117.48 mil rural
+60 /sqkm
+
+France
+35% Arable
+30% Forest
+20% Pasture
+15% Other
+
+Germany
+35% Arable
+33% Forest
+12% Pasture
+20% Other
+
+Japan
+68% Forest
+12% Arable
+0% Pasture
+20% Other
+
+
+Ukraine
+55% Arable
+15% Forest
+15% Pasture
+15% Other
+
+Turkey
+25% Arable
+25% Pasture
+15% Forest
+35% Other
+

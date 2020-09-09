@@ -54,21 +54,40 @@ ORIENTATIONS = {
     },
 }
 
+BLACK = (0, 0, 0)
+WHITE = (255, 255, 255)
+GREEN = (50, 168, 82)
+BLUE = (66, 135, 245)
+DARK_BLUE = (0, 0, 139)
+DARK_GREEN = (59, 85, 38)
+RED = (255, 0, 0)
+
+ORIGIN = (0, 0)
+
+GLOBAL_NATURAL_DEATH_RATE = 0.0243
+GLOBAL_NATURAL_FERTILITY_RATE = 0.0665
+GLOBAL_NATURAL_GROWTH_RATE = 0.0421  # GLOBAL_NATURAL_FERTILITY_RATE - GLOBAL_NATURAL_DEATH_RATE
+
 
 def rand_low(min, max):
     """
     Random number biased towards lower values
     """
-    r = random.uniform(0, 1)
-    return ((max - min) * r ** 2) + min
+    return random.triangular(min, max, min)
+
+
+def rand_lower(min, max):
+    """
+    Random number with stronger bias towards lower values
+    """
+    return math.sqrt(rand_low(min, max) * rand_low(min, max))
 
 
 def rand_high(min, max):
     """
     Random number biased towards higher values
     """
-    r = random.uniform(0, 1)
-    return ((max - min) * math.sqrt(r)) + min
+    return random.triangular(min, max, max)
 
 
 def rand_mid(min, max):
@@ -106,12 +125,20 @@ def dd(input):
     quit()
 
 
-def zipf(items):
+def zipf(items, c=1):
     """
     Choose random item based on a zipf distribution
+    Relative frequency of first item based on C
+        c=1 - 25%
+        c=2 - 17%
+        c=3 - 12%
+        c=4 - 11%?
+              10
+              8.5
+              7
+              8
     """
     q = []
-    c = 1
     length = len(items)
     for item in items:
         r = round(length / c * 100)
@@ -128,3 +155,10 @@ def get_midpoint(points):
         x_sum += x
         y_sum += y
     return (x_sum / n, y_sum / n)
+
+
+def random_color():
+    r = random.randrange(1, 255)
+    g = random.randrange(1, 255)
+    b = random.randrange(1, 255)
+    return (r, g, b)

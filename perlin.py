@@ -6,19 +6,24 @@ from noise import pnoise2
 
 class NoiseMap:
     def __init__(self, **kwargs):
-        self.scale = kwargs.get('scale', 200.0)
-        self.octaves = kwargs.get('octaves', 2)
-        self.persistence = kwargs.get('persistence', 0.5)
+        scale = kwargs.get('scale')
+        if not scale:
+            self.scale = 200.0
+        else:
+            self.scale = scale
+        self.octaves = kwargs.get('octaves', 4)
+        self.persistence = kwargs.get('persistence', 0.2)
         self.lacunarity = kwargs.get('lacunarity', 2.0)
         self.seed = kwargs.get('seed', 1)
 
-        val_range = set()
-        for y in range(1000):
-            for x in range(1000):
-                val_range.add(self.noise_at(x, y, normalize=False))
+        vals = []
+        for x in range(kwargs.get('width')):
+            for y in range(kwargs.get('height')):
+                v = self.noise_at(x, y, normalize=False)
+                vals.append(v)
 
-        self._min = min(val_range)
-        self._max = max(val_range)
+        self._min = min(vals)
+        self._max = max(vals)
 
     def noise_at(self, x, y, normalize=True):
         n = pnoise2(x / self.scale,
@@ -46,13 +51,21 @@ class NoiseMap:
         background = pygame.Surface((width, height))
         background.convert()
 
+        vals = []
         for x in range(width):
             for y in range(height):
-                # d = distance(midpoint, (x, y)) / (width / 2)
-                # dy = abs(y - mid_y)
-                # dx = abs(x - mid_x)
+                rgb = self.noise_at(x, y, normalize=False)
+                vals.append(rgb)
+                # color = (rgb, rgb, rgb)
+                # background.set_at((x, y), color)
 
-                rgb = self.noise_at(x, y) * 255
+        self._min = min(vals)
+        self._max = max(vals)
+
+        for x in range(width):
+            for y in range(height):
+
+                rgb = int(self.noise_at(x, y) * 255)
                 color = (rgb, rgb, rgb)
                 background.set_at((x, y), color)
 
@@ -74,4 +87,5 @@ class NoiseMap:
         x2, y2 = p2
         return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
-# NoiseMap(scale=500).display(1200, 800)
+# NoiseMap(scale=200).display(1200, 800)
+

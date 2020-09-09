@@ -1,17 +1,12 @@
 from vars import *
 from Language import Language, Culture
-from sympy.geometry import Point, Polygon
-from Character import Person, generate_family
+from Character import Person
 import random
 import math
 
-"""
-village = Village(population)
-village.area = population / density (randomized within a range)
-village.culture = Culture()
-village.name = village.culture.language.name()
+random.seed(1)
 
-village.leader = Person(culture)
+"""
 
 Resources
 # https://en.wikipedia.org/wiki/Cereal#Production
@@ -148,29 +143,115 @@ class Region:
             node.regions.add(self)
             self.nodes.append(node)
 
+    def flood_select(self, regions, types, result_set=[]):
+        """
+        Get the flood-fill set of regions of the same type as the input
+        """
+        result_set.append(self)
+        regions = [r for r in regions if r not in result_set]
+        bordered = self.bordered(regions, exclude_ocean=False)
+        for b in bordered:
+            if b in result_set:
+                continue
+            if b.type in types:
+                # pprint([r.centroid for r in result_set])
+                # # pprint(types)
+                result_set.append(b)
+                result_set += b.flood_select(regions, types, result_set)
+        return list(set(result_set))
+
     def __init__(self, points, **kwargs):
         world = kwargs.get('world')
         self.world = world
+        self.populace = None
+        self._populated = False
+        self.population_allotment = 0
+
         self.points = points
         self.nodes = []
         self.centroid = get_midpoint(points)
         self.subregions = set()
-        self.locales = set()
         self.type = ''
-        self.population = 0
-        self.capital = None
-        # self.area = None
-        self.road = None
         self.rivers = set()
 
-        return
+        self.cultures = []
+        self.names = []
 
-        self.cities = list()
-        self.towns = list()
-        self.villages = list()
-        self.settlements = self.cities + self.towns + self.villages
-        self.type = ''
-        self.color = ''
+        self.color = None
+        self.bound = False
+
+    def populate(self, population, culture):
+        """
+        Populate region
+        """
+        if self.type == 'ocean':
+            return
+        self._populated = True
+
+        population_pool = population
+        # if this region is empty and can be filled entirely by the population pool, do that
+        if not self.population and population_pool >= self.population_allotment:
+            # Assume this culture just fills up the entire region
+            #   so specifics aren't calculated until necessary
+            self.color = culture.color
+            self.cultures.append(culture)
+            self.names.append(culture.genName())
+            for s in self.subregions:
+                s.populate(s.population_allotment, culture)
+            self.populace = Populace(culture=culture, population=self.population_allotment)
+            return
+
+        while population_pool > 0:
+            # include in occupied subregions the subregions that are occupied externally to the current region
+            occupied_subregions = self.world.culture_subregions(culture)
+
+            # get all subregions that are not fully populated
+            if occupied_subregions:
+                unfilled_subregions = []
+                for subregion in occupied_subregions:
+                    unfilled_subregions += [
+                        r for r in subregion.bordered(self.subregions) if r.population < r.population_allotment
+                    ]
+
+                if len(unfilled_subregions) > 1:
+                    bordered_count = [[r, unfilled_subregions.count(r)] for r in set(unfilled_subregions)]
+                    max_bordered = max(r[1] for r in bordered_count)
+                    most_bordered = [r[0] for r in bordered_count if r[1] == max_bordered]
+                    unfilled_subregions = most_bordered
+
+            else:
+                unfilled_subregions = [
+                    r for r in self.subregions if r.type == 'land' and r.population < r.population_allotment
+                ]
+
+            # if there are none, finish prematurely
+            if not unfilled_subregions:
+                return
+
+            # select one at random
+            current_subregion = random.choice(unfilled_subregions)
+
+            # populate
+            allotment_remaining = current_subregion.population_allotment - current_subregion.population
+            pop = min(allotment_remaining, population_pool)
+            population_pool -= pop
+            current_subregion.populate(pop, culture)
+
+            # if population was successful
+            if culture in current_subregion.cultures and culture not in self.cultures:
+                # add to the list of occupied subregions
+                self.cultures.append(culture)
+                self.names.append(culture.genName())
+
+    @property
+    def population(self):
+        if not self._populated:
+            return 0
+        if self.populace:
+            return self.populace.population
+        else:
+            # check population of constituent regions
+            return sum(r.population for r in self.subregions)
 
     @property
     def elevation(self):
@@ -194,12 +275,13 @@ class Region:
         Precipitation scale should be 0-2000(mm/yr) with mode 500(?)
         How do I make Perlin noise do this?
         """
-
         try:
             return self._precipitation
         except AttributeError:
             cx, cy = self.centroid
-            precipitation = self.world.weathermap.noise_at(cx, cy) * 100
+            precipitation = self.world.weathermap.noise_at(cx, cy) * 2000
+            # if precipitation > 1800:
+            #     precipitation = 1800 + ((precipitation - 1800) / (200 / 2200))
             self._precipitation = int(precipitation)
             return self._precipitation
 
@@ -234,10 +316,10 @@ class Region:
 
     def maybe_encloses(self, point):
         x, y = point
-        if(self.bounds['min_x'] > x
-           or self.bounds['max_x'] < x
-           or self.bounds['min_y'] > y
-           or self.bounds['max_y'] < y):
+        if(x < self.bounds['min_x']
+           or x > self.bounds['max_x']
+           or y < self.bounds['min_y']
+           or y > self.bounds['max_y']):
             return False
         return True
 
@@ -276,85 +358,24 @@ class Region:
             self._area = area
             return area
 
-    def populate(self):
-        if self.type == 'ocean':
-            return
-
-        self.culture = Culture()
-        self.name = self.culture.genName()
-
-        for subregion in self.subregions:
-            subregion.culture = self.culture
-            subregion.name = subregion.culture.genName()
-
-            try:
-                geoarea = subregion.geo_area
-            except AttributeError:
-                subregion.geo_area = subregion.area / (self.world.scale ** 2)
-                geoarea = subregion.geo_area
-
-            subregion.density = int(subregion.precipitation * (15 / 100))
-            subregion.population = int(geoarea * subregion.density)
-
-        self.capital = sorted(self.subregions, key=lambda r: r.population, reverse=True)[0]
-        return
-
-        # if in a steppe or other arid biome, with low density (under 1-5?) pastoral nomadism
-        city_population = int(self.population / 10 * random.uniform(0.8, 1.2))
-
-        city = Settlement(population=city_population, culture=self.culture)
-        towns = []
-
-        n_satellites = random.randint(5, 7)
-        n = n_satellites
-        for _ in range(n_satellites):
-            town_population = int(city_population / n)
-            towns.append(Settlement(population=town_population, culture=self.culture))
-            n += 1
-
-        city.satellites = towns
-        self.city = city
-        self.towns = towns
-
-        print(f'Region of {self.name} generated')
-
-        """
-        village.leader = Person(culture)
-
-        Resources
-        # https://en.wikipedia.org/wiki/Cereal#Production
-        # wheat, barley, corn, rice, sorghum, millet, oats, rye, bananas,
-        #   potatoes, cassava, soybeans, sweet potato, yam, plantain
-        # tobacco, cotton, spices, coffee, rapeseed, tea,
-        # https://en.wikipedia.org/wiki/Livestock#Types
-        # sheep, cattle, horses, dogs, cats, donkeys, yak, buffalo, reindeer, camel, llama, alpaca, pig, rabbit
-
-        "leadership": ("democratic", "single_elder", "multiple_elder", "chiefdom"),
-        "gender_role": ("patriarchal", "matriarchal", "egalitarian"),
-        "sedentism": ("full", "transhumant", "nomadic"),
-        "violence": ("low", "moderate", "high")
-
-        self.water = random.randint(0, 100) < params.get('water', 0)
-        self.forest = random.randint(0, 100) < params.get('forest', 0)
-        self.hills = random.randint(0, 100) < params.get('hills', 0)
-
-        Villages have will have disputes with their neighbors
-        Think of a classification scheme for these disputes
-            Border dispute (this would be for larger entities)
-
-        Figure out combat and generalship
-
-        """
+    @property
+    def geoarea(self):
+        return self.area / (self.world.scale ** 2)
 
     def bordered(self, regions, exclude_ocean=True):
-        _bordered = set()
+        _bordered = []
         for region in regions:
-            if region is self:
+            if region is self or region in _bordered:
                 continue
             if exclude_ocean and region.type == 'ocean':
                 continue
-            if any(point in self.points for point in region.points):
-                _bordered.add(region)
+            matches = 0
+            for point in region.points:
+                if point in self.points:
+                    matches += 1
+                    if matches >= 2:
+                        _bordered.append(region)
+                        break
         return _bordered
 
     def distance_to(self, region):
@@ -368,13 +389,180 @@ class Region:
 
 
 class Subregion(Region):
+    """
+    Representation of a region with an area of about 1000 sqkm
+    """
+
     def __init__(self, *args, **kwargs):
         self.locales = set()
         super().__init__(*args, **kwargs)
 
+    def populate(self, population, culture):
+        """
+        Populate subregion
+        """
+        if self.type == 'ocean':
+            return
+        self._populated = True
+
+        population_pool = population
+
+        if not self.population and population_pool >= self.population_allotment:
+            # Assume this culture just fills up the entire region
+            #   so specifics aren't calculated until necessary
+            self.color = culture.color
+            self.cultures.append(culture)
+            self.names.append(culture.genName())
+
+            for o in self.locales:
+                o.populate(o.population_allotment, culture)
+            self.populace = Populace(culture=culture, population=self.population_allotment)
+            return
+
+        while population_pool > 0:
+            # include in occupied locales the locales that are occupied externally to the current subregion
+            occupied_locales = self.world.culture_locales(culture)
+
+            # get all locales that are not fully populated
+            if occupied_locales:
+                unfilled_locales = []
+                for locale in occupied_locales:
+                    unfilled_locales += [
+                        o for o in locale.bordered(self.locales) if not o.population
+                    ]
+
+                if len(unfilled_locales) > 1:
+                    bordered_count = [[r, unfilled_locales.count(r)] for r in set(unfilled_locales)]
+                    max_bordered = max(r[1] for r in bordered_count)
+                    most_bordered = [r[0] for r in bordered_count if r[1] == max_bordered]
+                    unfilled_locales = most_bordered
+
+            else:
+                unfilled_locales = [o for o in self.locales if o.type == 'land' and not o.population]
+
+            # if there are none, finish prematurely
+            if not unfilled_locales:
+                return
+
+            # select one at random
+            current_locale = random.choice(unfilled_locales)
+
+            # attempt to populate
+            pop = current_locale.population_allotment
+            # allotment_remaining = current_locale.population_allotment - current_locale.population
+            # pop = min(allotment_remaining, population_pool)
+            population_pool -= pop
+            current_locale.populate(pop, culture)
+
+            # if population was successful
+            if culture in current_locale.cultures and culture not in self.cultures:
+                # add to the list of occupied locales
+                self.cultures.append(culture)
+                self.names.append(culture.genName())
+
+    @property
+    def population(self):
+        if not self._populated:
+            return 0
+        if self.populace:
+            return self.populace.population
+        else:
+            # check population of constituent regions
+            return sum(r.population for r in self.locales)
+
 
 class Locale(Region):
-    pass
+    """
+    Representation of a region with an area of about 100sqkm
+    A locale may contain several settlements, forests, lakes, or other features, but is
+        not otherwise subdivided
+    """
+
+    def __init__(self, *args, **kwargs):
+        self.settlements = []
+        self.capital = None
+        self.mark = False
+        super().__init__(*args, **kwargs)
+
+    def populate(self, population, culture):
+        """
+        Populate locale
+        """
+        if self.type in ('ocean', 'lake'):
+            return
+        self._populated = True
+
+        self.color = culture.color
+        self.cultures.append(culture)
+        self.populace = Populace(culture=culture, population=population)
+        self.names.append(culture.genName())
+
+    def is_border(self):
+        bordered = self.bordered(self.world.locales, exclude_ocean=False)
+        if any(b.subregion is not self.subregion for b in bordered):
+            return True
+        return False
+
+    def settle(self):
+        """
+        Generate settlements for this locale
+        """
+        # urbanization between 5-10 percent
+        # largest
+        population = int(self.population / 10)
+        self.capital = Settlement(populace=self.populace.split(population), coords=self.centroid)
+        self.capital.leader = Person(culture=self.cultures[0], age=40)
+        self.capital.leader.generate_family()
+
+    @property
+    def population(self):
+        if not self._populated:
+            return 0
+        # if self.populace:
+        else:
+            return self.populace.population
+        # else:
+        #     # check population of constituent regions
+        #     return sum(r.population for r in self.settlements)
+
+
+class Settlement:
+    def __init__(self, **kwargs):
+        populace = kwargs.get('populace')
+        if populace:
+            self.populace = populace
+            self.culture = populace.culture
+        else:
+            population = kwargs.get('population')
+            culture = kwargs.get('culture')
+
+            self.culture = culture
+            self.populace = Populace(culture=culture, population=population)
+
+        self.locale = kwargs.get('locale')
+        self.coords = kwargs.get('coords')
+        self.name = self.culture.genName()
+
+        # http://www.lostkingdom.net/medieval-village-buildings-cottage/
+        """
+        ex:
+            Exports: Cured Fish, Meat, Iron
+            Imports: Salt, Wood, Hemp, Livestock feed, Coal, Spices
+        """
+
+    @property
+    def population(self):
+        return self.populace.population
+
+    # def populate(self):
+    #     people = []
+    #     while(len(people) < 10):
+    #         people += generate_family(culture=self.culture)
+    #     self.populace = Populace(people)
+    #     # print(f'{self.name} populated')
+
+    def __repr__(self):
+        return f'{self.name}, Population: {self.population}'
 
 
 class Continent(Region):
@@ -391,6 +579,11 @@ class World:
             self.nodes[index] = node
         return node
 
+    def region_at(self, point):
+        for region in self.regions:
+            if region.maybe_encloses(point) and region.encloses(point):
+                return region
+
     def __init__(self, **kwargs):
         self.width = kwargs.get('width')
         self.height = kwargs.get('height')
@@ -399,57 +592,95 @@ class World:
         self.weathermap = kwargs.get('weathermap', [])
         self.nodes = dict()
 
+        self.cultures = []
+        self.continents = set()
+        self.subcontinents = set()
         self.regions = set()
         self.subregions = set()
         self.locales = set()
+        self.settlements = set()
 
         _regions = kwargs.get('regions', [])
         _subregions = kwargs.get('subregions', [])
         _locales = kwargs.get('locales', [])
 
+        self.subcontinents = kwargs.get('subcontinents', [])
+
+        self.avg_temperature = kwargs.get('avg_temperature')
+
         for region in _regions:
             region.world = self
+            cx, cy = region.centroid
+            dl = ((cy - (self.height / 2)) * self.scale) / 1500
+            dt = dl * 10.8
+            region.temperature = int(dt + self.avg_temperature)
             self.regions.add(region)
 
         for subregion in _subregions:
+            subregion.world = self
+            region = None
+
             might_enclose = [r for r in self.regions if r.maybe_encloses(subregion.centroid)]
             if not might_enclose:
                 continue
-            if len(might_enclose) == 1:
-                region = might_enclose[0]
-            else:
-                for r in might_enclose:
-                    if r.encloses(subregion.centroid):
-                        region = r
-                        break
+            for r in might_enclose:
+                if r.encloses(subregion.centroid):
+                    region = r
+                    break
+            if region is None:
+                continue
+
             subregion.region = region
             subregion.type = region.type
 
+            cx, cy = subregion.centroid
             region.subregions.add(subregion)
-            subregion.world = self
-
             self.subregions.add(subregion)
 
         for locale in _locales:
+            locale.world = self
+            subregion = None
+
+            # region_might_enclose = [r for r in self.regions if r.maybe_encloses(locale.centroid)]
+            # if not region_might_enclose:
+            #     continue
+            # if len(region_might_enclose) == 1:
+            #     region = region_might_enclose[0]
+            # else:
+            #     for r in region_might_enclose:
+            #         if r.encloses(locale.centroid):
+            #             region = r
+            #             break
+
             might_enclose = [r for r in self.subregions if r.maybe_encloses(locale.centroid)]
             if not might_enclose:
                 continue
-            if len(might_enclose) == 1:
-                subregion = might_enclose[0]
-            else:
-                for r in might_enclose:
-                    if r.encloses(locale.centroid):
-                        subregion = r
-                        break
+            for r in might_enclose:
+                if r.encloses(locale.centroid):
+                    subregion = r
+                    break
+            if subregion is None:
+                continue
+
             locale.subregion = subregion
             locale.type = subregion.type
 
-            subregion.locales.add(subregion)
-            locale.region = subregion.region
-            locale.region.locales.add(locale)
-            locale.world = self
+            cx, cy = locale.centroid
+            density = int(locale.precipitation * (20 / 2000))
+            locale.population_allotment = int(density * locale.geoarea)
 
+            subregion.locales.add(locale)
             self.locales.add(locale)
+
+        for subregion in self.subregions:
+            subregion.population_allotment = 0
+            for locale in subregion.locales:
+                subregion.population_allotment += locale.population_allotment
+
+        for region in self.regions:
+            region.population_allotment = 0
+            for subregion in region.subregions:
+                region.population_allotment += subregion.population_allotment
 
         # print("Classifying...")
         # for locale in self.locales:
@@ -461,6 +692,10 @@ class World:
 
         # Index nodes
         print("Indexing...")
+        for continent in self.continents:
+            continent.index(self)
+        for subcontinent in self.subcontinents:
+            subcontinent.index(self)
         for region in self.regions:
             region.index(self)
         for subregion in self.subregions:
@@ -468,9 +703,10 @@ class World:
         for locale in self.locales:
             locale.index(self)
 
-        self.land = set(r for r in self.locales if r.type != 'ocean')
-        self.sea = set(r for r in self.locales if r.type == 'ocean')
+        self.land = set(r for r in self.locales if r.type == 'land')
+        self.sea = set(r for r in self.locales if r.type != 'land')
 
+    def index_borders(self):
         # Index borders
         self.borders = {
             't1': set(),
@@ -489,6 +725,11 @@ class World:
                     b.type.add('ocean')
                 elif l1.type == 'ocean' or l2.type == 'ocean':
                     b.type.add('coast')
+
+                if l1.type == 'lake' and l2.type == 'lake':
+                    b.type.add('lake')
+                elif l1.type == 'lake' or l2.type == 'lake':
+                    b.type.add('coast')
                 b.type.add('t1')
                 self.borders['t1'].add(b)
 
@@ -502,6 +743,11 @@ class World:
                 if l1.type == 'ocean' and l2.type == 'ocean':
                     b.type.add('ocean')
                 elif l1.type == 'ocean' or l2.type == 'ocean':
+                    b.type.add('coast')
+
+                if l1.type == 'lake' and l2.type == 'lake':
+                    b.type.add('lake')
+                elif l1.type == 'lake' or l2.type == 'lake':
                     b.type.add('coast')
 
                 if l1.region is not l2.region:
@@ -521,7 +767,13 @@ class World:
                     b.type.add('ocean')
                 elif l1.type == 'ocean' or l2.type == 'ocean':
                     b.type.add('coast')
-                if l1.region is not l2.region:
+
+                if l1.type == 'lake' and l2.type == 'lake':
+                    b.type.add('ocean')
+                elif l1.type == 'lake' or l2.type == 'lake':
+                    b.type.add('coast')
+
+                if l1.subregion.region is not l2.subregion.region:
                     b.type.add('t1')
                 elif l1.subregion is not l2.subregion:
                     b.type.add('t2')
@@ -529,69 +781,238 @@ class World:
                     b.type.add('t3')
                 self.borders['t3'].add(b)
 
-    def update(self):
-        self.region_types = dict()
-        for region in self.regions:
-            if region.type:
-                region.color = self.COLORS.get(region.type)
+    def index_culture_borders(self):
+        # Index borders
+        self.culture_borders = set()
+        for locale in self.locales:
+            for b in locale.borders:
                 try:
-                    self.region_types[region.type].add(region)
-                except KeyError:
-                    self.region_types[region.type] = set()
-                    self.region_types[region.type].add(region)
+                    l1, l2 = b.between
+                    if l1.cultures[0] not in l2.cultures:
+                        self.culture_borders.add(b)
+                except (IndexError, ValueError):
+                    continue
 
-
-class Settlement:
-    """
-    Hunting, fishing, farming (how common are each)
-    Other types?
-    """
-
-    def __init__(self, **kwargs):
-        self.region = kwargs.get('region')
-        self.population = int(kwargs.get('population'))
-        self.culture = kwargs.get('culture')
-        self.name = self.culture.genName()
-
-        # http://www.lostkingdom.net/medieval-village-buildings-cottage/
+    def populate(self, population, culture):
         """
-        ex:
-            Exports: Cured Fish, Meat, Iron
-            Imports: Salt, Wood, Hemp, Livestock feed, Coal, Spices
+        Populate world with a new culture
         """
+        population_pool = population
 
-    def populate(self):
-        # We just need to assign the mode of governance and natural resources for the purpose of
-        #   figuring out trade and other foreign affairs
-        # A region may be invaded by another for various reasons and this is determined by their culture and mode
-        #   of governance as well as what resources they have that someone might want to take
-        # As well traders may travel to or from this settlement and it's important to note what goods are and
-        #   are not available in order to drive trade
-        # The primary city acts as a hub for the region so its resources can be generally thought of as representative
-        #   of all resources for that region
+        while population_pool > 0:
+            occupied_regions = self.culture_regions(culture)
+
+            # get all regions that are not fully populated
+            if occupied_regions:
+                unfilled_regions = []
+                for region in occupied_regions:
+                    unfilled_regions += [
+                        r for r in region.bordered(self.regions) if r.population < r.population_allotment
+                    ]
+
+                if len(unfilled_regions) > 1:
+                    bordered_count = [[r, unfilled_regions.count(r)] for r in set(unfilled_regions)]
+                    max_bordered = max(r[1] for r in bordered_count)
+                    most_bordered = [r[0] for r in bordered_count if r[1] == max_bordered]
+                    unfilled_regions = most_bordered
+
+            else:
+                unfilled_regions = [
+                    r for r in self.regions if r.type == 'land' and r.population < r.population_allotment
+                ]
+
+            # if there are none, finish prematurely
+            if not unfilled_regions:
+                return
+
+            # select one at random
+            current_region = random.choice(unfilled_regions)
+
+            # populate
+            allotment_remaining = current_region.population_allotment - current_region.population
+            pop = min(allotment_remaining, population_pool)
+            population_pool -= pop
+            current_region.populate(pop, culture)
+
+    @staticmethod
+    def bordered(subject_regions, candidate_regions, most_bordered_only=True):
         """
-        What are the factors that decide the mode of governance?
-        A land with poor fertility favors raiding and survival-of-the-fittest
-        A land with high fertility may favor eldership as lifespans would be somewhat longer
+        Finds regions bordering a group of regions
+        Sort by the number of subject regions bordering each candidate region
         """
-        # dd((self.culture.name, self.population, self.region.fertility))
+        _bordered = []
+        for region in subject_regions:
+            for r in region.bordered(candidate_regions):
+                if r not in subject_regions:
+                    _bordered.append(r)
+        if len(_bordered) <= 1 or not most_bordered_only:
+            return _bordered
 
-        # Because I'm lazy let's just generate one family per city for now
-        # Everything else requires more thought put into resources, which requires thought put into terrain
+        bordered_count = [[r, _bordered.count(r)] for r in set(_bordered)]
+        max_bordered = max(r[1] for r in bordered_count)
+        most_bordered = [r[0] for r in bordered_count if r[1] == max_bordered]
 
-        people = []
-        while(len(people) < 10):
-            people += generate_family(culture=self.culture)
-        self.populace = Populace(people)
-        # print(f'{self.name} populated')
+        return most_bordered
 
-    def __repr__(self):
-        return f'{self.name}, Population: {self.population}'
+    def culture_settlements(self, culture):
+        _settlements = []
+        for settlement in self.settlements:
+            if culture is settlement.culture:
+                _settlements.append(settlement)
+        return _settlements
+
+    def culture_locales(self, culture):
+        """
+        Get the set of locales occupied by this culture
+        """
+        _locales = []
+        for locale in self.locales:
+            if culture in locale.cultures:
+                _locales.append(locale)
+        return _locales
+
+    def culture_subregions(self, culture):
+        """
+        Get the set of subregions occupied by this culture
+        """
+        _subregions = []
+        for subregion in self.subregions:
+            if culture in subregion.cultures:
+                _subregions.append(subregion)
+        return _subregions
+
+    def culture_regions(self, culture):
+        """
+        Get the set of regions occupied by this culture
+        """
+        _regions = []
+        for region in self.regions:
+            if culture in region.cultures:
+                _regions.append(region)
+        return _regions
+
+    def culture_population(self, culture):
+        population = 0
+        population += sum(o.population for o in self.culture_locales(culture))
+
+        return population
+
+    @staticmethod
+    def deserialize(data):
+        regions = data.get('regions')
+        rivers = data.get('rivers')
+
+        heightmap = NoiseMap(width=cls.width, height=cls.height, scale=500, seed=5)
+        weathermap = NoiseMap(width=cls.width, height=cls.height, seed=10)
+
+        regions = []
+        rivers = self.rivers
+
+        for region in self.regions:
+            _region = dict()
+            _region['culture'] = region.culture
+            _region['subregions'] = []
+
+            for subregion in region.subregions:
+                _subregion = dict()
+                _subregion['population'] = subregion.population
+                _subregion['locales'] = []
+
+                for locale in subregion.locales:
+                    _locale = dict()
+                    _locale['points'] = locale.points
+                    _subregion['locales'].append(_locale)
+
+                _region['subregions'].append(_subregion)
+
+            regions.append(_region)
+
+    def serialize(self):
+        regions = []
+        rivers = []
+        heightmap = {
+            'scale': self.heightmap.scale,
+            'octaves': self.heightmap.octaves,
+            'persistence': self.heightmap.persistence,
+            'lacunarity': self.heightmap.lacunarity,
+            'seed': self.heightmap.seed,
+        }
+        weathermap = {
+            'scale': self.weathermap.scale,
+            'octaves': self.weathermap.octaves,
+            'persistence': self.weathermap.persistence,
+            'lacunarity': self.weathermap.lacunarity,
+            'seed': self.weathermap.seed,
+        }
+
+        for region in self.regions:
+            _region = dict()
+            _region['culture'] = region.culture
+            _region['subregions'] = []
+
+            for subregion in region.subregions:
+                _subregion = dict()
+                _subregion['population'] = subregion.population
+                _subregion['locales'] = []
+
+                for locale in subregion.locales:
+                    _locale = dict()
+                    _locale['points'] = locale.points
+                    _subregion['locales'].append(_locale)
+
+                _region['subregions'].append(_subregion)
+
+            regions.append(_region)
+
+        for river in self.rivers:
+            _river = []
+            for segment in river:
+                p1, p2 = segment
+                _river.append((p1.coords, p2.coords))
+            rivers.append(_river)
+
+        return {
+            'regions': regions,
+            'rivers': rivers,
+            'heightmap': heightmap,
+            'weathermap': weathermap,
+        }
 
 
 class Populace:
-    def __init__(self, initial, **kwargs):
-        self.people = initial
+    """
+    A set number of people of one culture in one location
+    """
 
-    def __repr__(self):
-        return self.people
+    ages = AGES
+    """
+    The percentage of the population comprising each age group
+    Male and female is going to need to be incorporated here as well
+    For general population growth this will form the basis of birth rates
+
+    'age':  0, 'weight': 22
+    'age': 10, 'weight': 17
+    'age': 20, 'weight': 18
+    'age': 30, 'weight': 16
+    'age': 40, 'weight': 12
+    'age': 50, 'weight': 9
+    'age': 60, 'weight': 6
+    'age': 70, 'weight': 2
+    """
+
+    def __init__(self, **kwargs):
+        self.culture = kwargs.get('culture', Culture())
+        self.population = kwargs.get('population')
+
+    def split(self, population):
+        """
+        Splits off a number of people to form a new populace unit
+        """
+        self.population -= population
+        return Populace(culture=self.culture, population=population)
+
+    def recalculate(self):
+        """
+        Recalculate age weights based on any demographic changes
+        """
+        pass

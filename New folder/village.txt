@@ -26,10 +26,6 @@ attack by neighboring village or neighboring herders (for a variety of reasons)
 internal squabble
 	may arbitrate dispute, may go well or poorly based on stats
 
-choices
-pursue a relationship
-construct an inspiring tale
-go on a raid
 
 focuses for each lifetime / destiny
     mercantile
